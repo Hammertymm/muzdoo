@@ -116,6 +116,91 @@
     }
     .add-form button:active { transform: scale(0.99); }
 
+    /* Phase 6: the photo picker + preview inside the add/edit form. */
+    .photo-pick {
+      display: inline-block;
+      margin-top: 8px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+      color: var(--muted);
+      font-size: 0.95rem;
+      cursor: pointer;
+      text-align: center;
+    }
+    .photo-preview {
+      margin-top: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .photo-preview img {
+      width: 100%;
+      max-height: 220px;
+      object-fit: cover;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+    }
+    #photo-remove {
+      align-self: flex-start;
+      padding: 8px 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+      color: var(--danger);
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+
+    /* Phase 5: the "Import a list" section reuses the collapsible .more look. */
+    .import-hint {
+      margin: 10px 0 0;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+    .more textarea,
+    .more input,
+    .more select {
+      width: 100%;
+      margin-top: 8px;
+    }
+    #import-text {
+      font-family: inherit;
+      resize: vertical;
+      font-size: 1rem;
+      padding: 12px;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--ink);
+    }
+    #import-category,
+    #import-btn {
+      font-size: 1rem;
+      padding: 12px;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--ink);
+    }
+    #import-btn {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    #import-btn:active { transform: scale(0.99); }
+    /* The "Imported N items" confirmation line. */
+    .import-result {
+      margin: 10px 0 0;
+      color: var(--accent);
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+
     /* ---- Tabs: Active vs Done ---- */
     .tabs {
       display: flex;
@@ -227,6 +312,16 @@
     }
     .item .meta a:hover { text-decoration: underline; }
 
+    /* Phase 6: the photo thumbnail shown on an item card. */
+    .item .thumb {
+      width: 100%;
+      max-height: 180px;
+      object-fit: cover;        /* fill the box without squashing the photo */
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: var(--bg);
+    }
+
     /* The edit + delete buttons sit together on the right. */
     .item .actions {
       flex: none;
@@ -320,6 +415,18 @@
           placeholder="Location (e.g. Lisbon)"
           autocomplete="off"
         />
+
+        <!--
+          Phase 6: a single optional photo. The real <input type="file"> is
+          hidden and a styled <label> triggers it (nicer than the default
+          button). accept="image/*" lets the phone offer the photo library.
+        -->
+        <label class="photo-pick" id="photo-pick" for="photo-input">Add photo</label>
+        <input type="file" id="photo-input" accept="image/*" hidden />
+        <div class="photo-preview" id="photo-preview" hidden>
+          <img id="photo-preview-img" alt="Selected photo preview" />
+          <button type="button" id="photo-remove">Remove photo</button>
+        </div>
       </details>
 
       <div class="form-actions">
@@ -328,6 +435,24 @@
         <button type="button" id="cancel-edit" hidden>Cancel</button>
       </div>
     </form>
+
+    <!--
+      Phase 5: bulk import. Paste a list (one item per line), pick ONE category
+      for the whole batch, and each non-blank line becomes its own item.
+      Collapsed by default so it stays out of the way of quick single adds.
+    -->
+    <details class="more" id="import-details">
+      <summary>Import a list (optional)</summary>
+      <p class="import-hint">Paste one item per line. Each line becomes an item in the category you choose.</p>
+      <textarea id="import-text" rows="5" placeholder="Lisbon
+Tokyo
+Reykjavik"></textarea>
+      <select id="import-category">
+        <!-- The 8 categories get added by JavaScript below. -->
+      </select>
+      <button type="button" id="import-btn">Import list</button>
+      <p class="import-result" id="import-result" hidden></p>
+    </details>
 
     <!-- Phase 2: switch between things still to do (Active) and things done (Done). -->
     <div class="tabs">
@@ -351,9 +476,12 @@
   <script>
     // ====== Data shape ======
     // Each item looks like:
-    //   { id, title, category, note, link, location, dateAdded, done }
+    //   { id, title, category, note, link, location, hasPhoto, dateAdded, done }
     // note/link/location are optional (empty string when not given).
     // 'done' is false when added; ticking the checkbox flips it to true.
+    // 'hasPhoto' is true when a photo exists for this item. The photo BYTES
+    // don't live here (they'd blow past localStorage's tiny limit) — they're
+    // kept in IndexedDB, a separate, much larger browser store, keyed by item id.
 
     // The 8 fixed categories (the "verbs"). Order = how they appear in the picker.
     const CATEGORIES = ["Buy", "Go", "Read", "Watch", "Listen", "Consume", "Experience", "Other"];
@@ -384,6 +512,126 @@
       localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
     }
 
+    // ====== Photo storage (IndexedDB) ======
+    // localStorage is tiny (a few MB) and meant for text. Photos go in
+    // IndexedDB instead — a separate browser store built for larger data.
+    // We keep one "store" called "photos"; the key is the item's id and the
+    // value is the image Blob. These helpers wrap IndexedDB's old-style
+    // callback API in Promises so we can use clean async/await below.
+    const DB_NAME = "wishlist";
+    const PHOTO_STORE = "photos";
+    let dbPromise = null;
+
+    function openDB() {
+      if (dbPromise) return dbPromise;
+      dbPromise = new Promise(function (resolve, reject) {
+        const req = indexedDB.open(DB_NAME, 1);
+        // Runs only when the DB is first created (or its version changes).
+        req.onupgradeneeded = function () {
+          const db = req.result;
+          if (!db.objectStoreNames.contains(PHOTO_STORE)) {
+            db.createObjectStore(PHOTO_STORE);
+          }
+        };
+        req.onsuccess = function () { resolve(req.result); };
+        req.onerror = function () { reject(req.error); };
+      });
+      return dbPromise;
+    }
+
+    async function putPhoto(id, blob) {
+      const db = await openDB();
+      return new Promise(function (resolve, reject) {
+        const tx = db.transaction(PHOTO_STORE, "readwrite");
+        tx.objectStore(PHOTO_STORE).put(blob, id);
+        tx.oncomplete = function () { resolve(); };
+        tx.onerror = function () { reject(tx.error); };
+      });
+    }
+
+    async function getPhoto(id) {
+      const db = await openDB();
+      return new Promise(function (resolve, reject) {
+        const tx = db.transaction(PHOTO_STORE, "readonly");
+        const req = tx.objectStore(PHOTO_STORE).get(id);
+        req.onsuccess = function () { resolve(req.result || null); };
+        req.onerror = function () { reject(req.error); };
+      });
+    }
+
+    async function deletePhoto(id) {
+      const db = await openDB();
+      return new Promise(function (resolve, reject) {
+        const tx = db.transaction(PHOTO_STORE, "readwrite");
+        tx.objectStore(PHOTO_STORE).delete(id);
+        tx.oncomplete = function () { resolve(); };
+        tx.onerror = function () { reject(tx.error); };
+      });
+    }
+
+    // Shrink very large photos and re-encode as JPEG. This keeps things fast
+    // and turns iPhone HEIC photos into a format every browser can show.
+    // Returns a Promise of a Blob ready to store.
+    function processImage(file) {
+      return new Promise(function (resolve, reject) {
+        const img = new Image();
+        const url = URL.createObjectURL(file);
+        img.onload = function () {
+          URL.revokeObjectURL(url);
+          const maxDim = 1600;  // cap the longest side; smaller photos are left as-is
+          let width = img.naturalWidth;
+          let height = img.naturalHeight;
+          if (Math.max(width, height) > maxDim) {
+            const scale = maxDim / Math.max(width, height);
+            width = Math.round(width * scale);
+            height = Math.round(height * scale);
+          }
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+          canvas.toBlob(function (blob) {
+            if (blob) resolve(blob);
+            else reject(new Error("Could not process image"));
+          }, "image/jpeg", 0.85);
+        };
+        img.onerror = function () {
+          URL.revokeObjectURL(url);
+          reject(new Error("Could not read image"));
+        };
+        img.src = url;
+      });
+    }
+
+    // We turn each stored photo Blob into a temporary URL the <img> can show.
+    // Cache those URLs by item id so re-renders (e.g. while searching) reuse
+    // them instead of re-reading the DB and leaking new URLs each time.
+    const photoUrlCache = new Map();
+
+    function invalidatePhotoCache(id) {
+      if (photoUrlCache.has(id)) {
+        URL.revokeObjectURL(photoUrlCache.get(id));
+        photoUrlCache.delete(id);
+      }
+    }
+
+    // Load an item's photo from IndexedDB and show it in the given <img>.
+    async function attachPhoto(imgEl, id) {
+      if (photoUrlCache.has(id)) {
+        imgEl.src = photoUrlCache.get(id);
+        return;
+      }
+      try {
+        const blob = await getPhoto(id);
+        if (!blob) return;
+        const url = URL.createObjectURL(blob);
+        photoUrlCache.set(id, url);
+        imgEl.src = url;
+      } catch (e) {
+        // If a photo can't be loaded, just leave the image blank.
+      }
+    }
+
     // ====== Grab the bits of the page we need ======
     const form = document.getElementById("add-form");
     const titleInput = document.getElementById("title-input");
@@ -401,6 +649,25 @@
     const submitBtn = document.getElementById("submit-btn");
     const cancelBtn = document.getElementById("cancel-edit");
     const moreDetails = document.getElementById("more-details");
+    // Phase 5: the bulk-import controls.
+    const importText = document.getElementById("import-text");
+    const importCategory = document.getElementById("import-category");
+    const importBtn = document.getElementById("import-btn");
+    const importResult = document.getElementById("import-result");
+    // Phase 6: the photo picker, its hidden file input, and the preview.
+    const photoPick = document.getElementById("photo-pick");
+    const photoInput = document.getElementById("photo-input");
+    const photoPreview = document.getElementById("photo-preview");
+    const photoPreviewImg = document.getElementById("photo-preview-img");
+    const photoRemove = document.getElementById("photo-remove");
+
+    // Tracks the photo state of the form between opening it and submitting:
+    //   formPhotoBlob    — a processed Blob to save (a newly picked photo), or null
+    //   formPhotoRemoved — true if editing and the user cleared an existing photo
+    //   formPreviewUrl   — the temporary URL shown in the form preview (to revoke)
+    let formPhotoBlob = null;
+    let formPhotoRemoved = false;
+    let formPreviewUrl = null;
 
     // Fill the category picker (add form) from the CATEGORIES list above.
     for (const cat of CATEGORIES) {
@@ -416,6 +683,14 @@
       option.value = cat;
       option.textContent = cat;
       filterCategory.appendChild(option);
+    }
+
+    // Fill the bulk-import category picker as well.
+    for (const cat of CATEGORIES) {
+      const option = document.createElement("option");
+      option.value = cat;
+      option.textContent = cat;
+      importCategory.appendChild(option);
     }
 
     // Re-draw whenever the search text or category filter changes.
@@ -435,7 +710,7 @@
     // ====== Adding OR editing an item ======
     // One form does both jobs. If editingId is set we update that item;
     // otherwise we create a new one. The optional fields are read either way.
-    form.addEventListener("submit", function (event) {
+    form.addEventListener("submit", async function (event) {
       event.preventDefault(); // stop the page from reloading
 
       const title = titleInput.value.trim();
@@ -456,6 +731,21 @@
           item.note = note;
           item.link = link;
           item.location = location;
+
+          // Photo: store a newly picked one, or remove the existing one.
+          if (formPhotoBlob) {
+            try {
+              await putPhoto(item.id, formPhotoBlob);
+              item.hasPhoto = true;
+              invalidatePhotoCache(item.id);  // force a fresh load on next render
+            } catch (e) {
+              alert("The item was saved, but its photo couldn't be stored.");
+            }
+          } else if (formPhotoRemoved) {
+            try { await deletePhoto(item.id); } catch (e) {}
+            item.hasPhoto = false;
+            invalidatePhotoCache(item.id);
+          }
         }
       } else {
         // --- Adding: build a brand-new item. ---
@@ -466,9 +756,20 @@
           note: note,
           link: link,
           location: location,
+          hasPhoto: false,
           dateAdded: new Date().toISOString(),
           done: false,
         };
+        // Store the photo (if any) FIRST, so hasPhoto only flips true once the
+        // bytes are really in IndexedDB.
+        if (formPhotoBlob) {
+          try {
+            await putPhoto(newItem.id, formPhotoBlob);
+            newItem.hasPhoto = true;
+          } catch (e) {
+            alert("The item was saved, but its photo couldn't be stored.");
+          }
+        }
         items.push(newItem);
         // New items are always active, so jump to the Active tab to see it.
         currentView = "active";
@@ -493,6 +794,19 @@
       linkInput.value = item.link || "";
       locationInput.value = item.location || "";
 
+      // Start from "keep whatever photo it has", then show it in the preview.
+      formPhotoBlob = null;
+      formPhotoRemoved = false;
+      clearFormPhotoPreview();
+      if (item.hasPhoto) {
+        getPhoto(item.id).then(function (blob) {
+          // Guard: the user may have cancelled or switched items before this loaded.
+          if (blob && editingId === item.id) {
+            showFormPhotoPreview(URL.createObjectURL(blob));
+          }
+        });
+      }
+
       // Open the "More details" section so the optional fields are visible,
       // swap the button to "Save changes", and reveal Cancel.
       moreDetails.open = true;
@@ -507,17 +821,107 @@
     // ====== Clearing the form / leaving edit mode ======
     function resetForm() {
       editingId = null;
-      form.reset();              // empties title, note, link, location
+      form.reset();              // empties title, note, link, location, file input
       categoryInput.value = CATEGORIES[0];  // back to the first category
       moreDetails.open = false;
       submitBtn.textContent = "Add to list";
       cancelBtn.hidden = true;
+      // Clear the photo picker state and its preview.
+      formPhotoBlob = null;
+      formPhotoRemoved = false;
+      clearFormPhotoPreview();
     }
 
     // The Cancel button backs out of an edit without saving.
     cancelBtn.addEventListener("click", function () {
       resetForm();
       titleInput.focus();
+    });
+
+    // ====== Bulk import (Phase 5) ======
+    // Each non-blank line of the paste becomes its own item, all in one category.
+    importBtn.addEventListener("click", function () {
+      const category = importCategory.value;
+
+      // Split on new lines, trim each, and drop blank lines.
+      const lines = importText.value
+        .split("\n")
+        .map(function (line) { return line.trim(); })
+        .filter(function (line) { return line !== ""; });
+
+      if (lines.length === 0) {
+        importResult.textContent = "Nothing to import — paste some lines first.";
+        importResult.hidden = false;
+        return;
+      }
+
+      // Turn each line into a normal item — same shape as a manually-added one.
+      for (const line of lines) {
+        items.push({
+          id: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random())),
+          title: line,
+          category: category,
+          note: "",
+          link: "",
+          location: "",
+          dateAdded: new Date().toISOString(),
+          done: false,
+        });
+      }
+
+      saveItems();
+      currentView = "active";   // imported items are active, so show that tab
+      render();
+
+      // Confirm how many were created, and clear the box for next time.
+      importResult.textContent = "Imported " + lines.length +
+        (lines.length === 1 ? " item." : " items.");
+      importResult.hidden = false;
+      importText.value = "";
+    });
+
+    // ====== Photo picker (Phase 6) ======
+    // Show a chosen/existing photo in the form's preview area.
+    function showFormPhotoPreview(url) {
+      if (formPreviewUrl) URL.revokeObjectURL(formPreviewUrl);
+      formPreviewUrl = url;
+      photoPreviewImg.src = url;
+      photoPreview.hidden = false;
+      photoPick.textContent = "Change photo";
+    }
+
+    // Hide the preview and reset the picker label.
+    function clearFormPhotoPreview() {
+      if (formPreviewUrl) {
+        URL.revokeObjectURL(formPreviewUrl);
+        formPreviewUrl = null;
+      }
+      photoPreviewImg.removeAttribute("src");
+      photoPreview.hidden = true;
+      photoPick.textContent = "Add photo";
+    }
+
+    // When a file is picked: process it, remember it, and preview it.
+    photoInput.addEventListener("change", async function () {
+      const file = photoInput.files[0];
+      if (!file) return;
+      try {
+        formPhotoBlob = await processImage(file);
+        formPhotoRemoved = false;
+        showFormPhotoPreview(URL.createObjectURL(formPhotoBlob));
+      } catch (e) {
+        alert("Sorry — that image couldn't be added. Try a different photo.");
+      }
+      // Clear the input's value so picking the SAME file again still fires 'change'.
+      photoInput.value = "";
+    });
+
+    // The Remove button drops the photo from the form (and marks it for deletion
+    // on save, if we're editing an item that already had one).
+    photoRemove.addEventListener("click", function () {
+      formPhotoBlob = null;
+      formPhotoRemoved = true;
+      clearFormPhotoPreview();
     });
 
     // ====== Marking done / un-done ======
@@ -536,6 +940,9 @@
       });
       // If we were editing the item we just deleted, leave edit mode.
       if (editingId === id) resetForm();
+      // Remove its photo too, so we don't leave orphaned data in IndexedDB.
+      deletePhoto(id).catch(function () {});
+      invalidatePhotoCache(id);
       saveItems();
       render();
     }
@@ -609,6 +1016,18 @@
         // --- The middle column: badge + title on top, optional details below. ---
         const body = document.createElement("div");
         body.className = "body";
+
+        // Photo thumbnail at the top of the card, when this item has one.
+        // The bytes load from IndexedDB asynchronously, so the <img> fills in
+        // a moment after the card appears.
+        if (item.hasPhoto) {
+          const img = document.createElement("img");
+          img.className = "thumb";
+          img.alt = item.title;
+          img.loading = "lazy";
+          attachPhoto(img, item.id);
+          body.appendChild(img);
+        }
 
         const titleRow = document.createElement("div");
         titleRow.className = "title-row";
