@@ -76,13 +76,30 @@
     }
     .add-form button:active { transform: scale(0.99); }
 
-    /* ---- The list ---- */
-    .count {
+    /* ---- Tabs: Active vs Done ---- */
+    .tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .tab {
+      flex: 1;
+      font-size: 0.95rem;
+      padding: 10px;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: #fff;
       color: var(--muted);
-      font-size: 0.85rem;
-      margin-bottom: 8px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .tab.active {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
     }
 
+    /* ---- The list ---- */
     ul.items {
       list-style: none;
       margin: 0;
@@ -102,10 +119,24 @@
       gap: 10px;
     }
 
+    /* The tick box for marking something done */
+    .check {
+      width: 22px;
+      height: 22px;
+      flex: none;
+      cursor: pointer;
+      accent-color: var(--accent);
+    }
+
     .item .title {
       flex: 1;
       font-weight: 500;
       word-break: break-word;
+    }
+    /* In the Done view, completed titles get a gentle strike-through. */
+    li.item.done .title {
+      color: var(--muted);
+      text-decoration: line-through;
     }
 
     /* The little category label */
@@ -162,7 +193,11 @@
       <button type="submit">Add to list</button>
     </form>
 
-    <p class="count" id="count"></p>
+    <!-- Phase 2: switch between things still to do (Active) and things done (Done). -->
+    <div class="tabs">
+      <button class="tab" id="tab-active" type="button">Active</button>
+      <button class="tab" id="tab-done" type="button">Done</button>
+    </div>
 
     <!-- The list of items gets drawn here by JavaScript. -->
     <ul class="items" id="list"></ul>
@@ -172,13 +207,16 @@
     // ====== Data shape ======
     // Each item looks like:
     //   { id, title, category, dateAdded, done }
-    // For Phase 1 'done' is always false — we use it in Phase 2.
+    // 'done' is false when added; ticking the checkbox flips it to true.
 
     // The 8 fixed categories (the "verbs"). Order = how they appear in the picker.
     const CATEGORIES = ["Buy", "Go", "Read", "Watch", "Listen", "Consume", "Experience", "Other"];
 
     // The name of the "box" the browser keeps our data in, on this device.
     const STORAGE_KEY = "wishlist.items";
+
+    // Which tab we're looking at: "active" (not done) or "done" (completed).
+    let currentView = "active";
 
     // ====== Load saved items (or start empty) ======
     let items = loadItems();
@@ -202,7 +240,8 @@
     const titleInput = document.getElementById("title-input");
     const categoryInput = document.getElementById("category-input");
     const list = document.getElementById("list");
-    const count = document.getElementById("count");
+    const tabActive = document.getElementById("tab-active");
+    const tabDone = document.getElementById("tab-done");
 
     // Fill the category picker from the CATEGORIES list above.
     for (const cat of CATEGORIES) {
@@ -211,6 +250,16 @@
       option.textContent = cat;
       categoryInput.appendChild(option);
     }
+
+    // ====== Switching tabs ======
+    tabActive.addEventListener("click", function () {
+      currentView = "active";
+      render();
+    });
+    tabDone.addEventListener("click", function () {
+      currentView = "done";
+      render();
+    });
 
     // ====== Adding an item ======
     form.addEventListener("submit", function (event) {
@@ -229,12 +278,24 @@
 
       items.push(newItem);
       saveItems();
+
+      // New items are always active, so make sure we're on the Active tab to see it.
+      currentView = "active";
       render();
 
       // Reset the form for the next quick entry.
       titleInput.value = "";
       titleInput.focus();
     });
+
+    // ====== Marking done / un-done ======
+    function toggleDone(id) {
+      const item = items.find(function (i) { return i.id === id; });
+      if (!item) return;
+      item.done = !item.done;
+      saveItems();
+      render();
+    }
 
     // ====== Deleting an item ======
     function deleteItem(id) {
@@ -247,22 +308,43 @@
 
     // ====== Drawing the list on screen ======
     function render() {
+      // Update the tab labels with live counts, and highlight the active tab.
+      const activeCount = items.filter(function (i) { return !i.done; }).length;
+      const doneCount = items.filter(function (i) { return i.done; }).length;
+      tabActive.textContent = "Active (" + activeCount + ")";
+      tabDone.textContent = "Done (" + doneCount + ")";
+      tabActive.classList.toggle("active", currentView === "active");
+      tabDone.classList.toggle("active", currentView === "done");
+
+      // Show only the items that belong in the current tab.
+      const visible = items.filter(function (i) {
+        return currentView === "done" ? i.done : !i.done;
+      });
+
       list.innerHTML = ""; // clear what's there, then rebuild
 
-      if (items.length === 0) {
+      if (visible.length === 0) {
         const empty = document.createElement("div");
         empty.className = "empty";
-        empty.textContent = "Nothing yet — add your first want above.";
+        empty.textContent = currentView === "done"
+          ? "Nothing completed yet — tick something off in Active."
+          : "Nothing yet — add your first want above.";
         list.appendChild(empty);
-        count.textContent = "";
         return;
       }
 
-      count.textContent = items.length + (items.length === 1 ? " item" : " items");
-
-      for (const item of items) {
+      for (const item of visible) {
         const li = document.createElement("li");
-        li.className = "item";
+        li.className = item.done ? "item done" : "item";
+
+        const check = document.createElement("input");
+        check.type = "checkbox";
+        check.className = "check";
+        check.checked = item.done;
+        check.setAttribute("aria-label", (item.done ? "Mark not done: " : "Mark done: ") + item.title);
+        check.addEventListener("change", function () {
+          toggleDone(item.id);
+        });
 
         const badge = document.createElement("span");
         badge.className = "badge";
@@ -281,6 +363,7 @@
           deleteItem(item.id);
         });
 
+        li.appendChild(check);
         li.appendChild(badge);
         li.appendChild(title);
         li.appendChild(del);
