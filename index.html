@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <!-- This line is what makes the page behave properly on a phone screen. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Wishlist</title>
+  <style>
+    /* ---- Basic look. Mobile-first: designed for a narrow phone screen. ---- */
+    :root {
+      --bg: #faf9f7;
+      --card: #ffffff;
+      --ink: #1d1b16;
+      --muted: #6b675f;
+      --line: #e7e3dc;
+      --accent: #2f6f4f;
+      --danger: #b23b3b;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+      line-height: 1.4;
+    }
+
+    /* A centred column that stays readable on big screens but fills a phone. */
+    .wrap {
+      max-width: 560px;
+      margin: 0 auto;
+      padding: 16px;
+    }
+
+    header h1 {
+      font-size: 1.6rem;
+      margin: 8px 0 2px;
+    }
+    header p {
+      margin: 0 0 16px;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    /* ---- The add form ---- */
+    .add-form {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+      margin-bottom: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .add-form input,
+    .add-form select,
+    .add-form button {
+      font-size: 1rem;
+      padding: 12px;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--ink);
+    }
+
+    .add-form button {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .add-form button:active { transform: scale(0.99); }
+
+    /* ---- The list ---- */
+    .count {
+      color: var(--muted);
+      font-size: 0.85rem;
+      margin-bottom: 8px;
+    }
+
+    ul.items {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    li.item {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .item .title {
+      flex: 1;
+      font-weight: 500;
+      word-break: break-word;
+    }
+
+    /* The little category label */
+    .badge {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--accent);
+      background: #eef4ef;
+      border: 1px solid #d8e6dc;
+      padding: 3px 8px;
+      border-radius: 999px;
+      white-space: nowrap;
+    }
+
+    .delete {
+      border: none;
+      background: transparent;
+      color: var(--danger);
+      font-size: 1.3rem;
+      line-height: 1;
+      cursor: pointer;
+      padding: 4px 8px;
+    }
+
+    .empty {
+      color: var(--muted);
+      text-align: center;
+      padding: 30px 10px;
+      border: 1px dashed var(--line);
+      border-radius: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Wishlist</h1>
+      <p>Everything you want to do, buy, read, watch, hear, eat and experience.</p>
+    </header>
+
+    <!-- Phase 1: the add form. -->
+    <form class="add-form" id="add-form">
+      <input
+        type="text"
+        id="title-input"
+        placeholder="What do you want? (e.g. Lisbon)"
+        autocomplete="off"
+        required
+      />
+      <select id="category-input">
+        <!-- The 8 fixed categories get filled in by JavaScript below. -->
+      </select>
+      <button type="submit">Add to list</button>
+    </form>
+
+    <p class="count" id="count"></p>
+
+    <!-- The list of items gets drawn here by JavaScript. -->
+    <ul class="items" id="list"></ul>
+  </div>
+
+  <script>
+    // ====== Data shape ======
+    // Each item looks like:
+    //   { id, title, category, dateAdded, done }
+    // For Phase 1 'done' is always false — we use it in Phase 2.
+
+    // The 8 fixed categories (the "verbs"). Order = how they appear in the picker.
+    const CATEGORIES = ["Buy", "Go", "Read", "Watch", "Listen", "Consume", "Experience", "Other"];
+
+    // The name of the "box" the browser keeps our data in, on this device.
+    const STORAGE_KEY = "wishlist.items";
+
+    // ====== Load saved items (or start empty) ======
+    let items = loadItems();
+
+    function loadItems() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        return raw ? JSON.parse(raw) : [];
+      } catch (e) {
+        // If the saved data is somehow broken, start fresh rather than crash.
+        return [];
+      }
+    }
+
+    function saveItems() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+    }
+
+    // ====== Grab the bits of the page we need ======
+    const form = document.getElementById("add-form");
+    const titleInput = document.getElementById("title-input");
+    const categoryInput = document.getElementById("category-input");
+    const list = document.getElementById("list");
+    const count = document.getElementById("count");
+
+    // Fill the category picker from the CATEGORIES list above.
+    for (const cat of CATEGORIES) {
+      const option = document.createElement("option");
+      option.value = cat;
+      option.textContent = cat;
+      categoryInput.appendChild(option);
+    }
+
+    // ====== Adding an item ======
+    form.addEventListener("submit", function (event) {
+      event.preventDefault(); // stop the page from reloading
+
+      const title = titleInput.value.trim();
+      if (!title) return; // ignore empty titles
+
+      const newItem = {
+        id: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random())),
+        title: title,
+        category: categoryInput.value,
+        dateAdded: new Date().toISOString(),
+        done: false,
+      };
+
+      items.push(newItem);
+      saveItems();
+      render();
+
+      // Reset the form for the next quick entry.
+      titleInput.value = "";
+      titleInput.focus();
+    });
+
+    // ====== Deleting an item ======
+    function deleteItem(id) {
+      items = items.filter(function (item) {
+        return item.id !== id;
+      });
+      saveItems();
+      render();
+    }
+
+    // ====== Drawing the list on screen ======
+    function render() {
+      list.innerHTML = ""; // clear what's there, then rebuild
+
+      if (items.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "Nothing yet — add your first want above.";
+        list.appendChild(empty);
+        count.textContent = "";
+        return;
+      }
+
+      count.textContent = items.length + (items.length === 1 ? " item" : " items");
+
+      for (const item of items) {
+        const li = document.createElement("li");
+        li.className = "item";
+
+        const badge = document.createElement("span");
+        badge.className = "badge";
+        badge.textContent = item.category;
+
+        const title = document.createElement("span");
+        title.className = "title";
+        title.textContent = item.title;
+
+        const del = document.createElement("button");
+        del.className = "delete";
+        del.type = "button";
+        del.textContent = "×"; // a × symbol
+        del.setAttribute("aria-label", "Delete " + item.title);
+        del.addEventListener("click", function () {
+          deleteItem(item.id);
+        });
+
+        li.appendChild(badge);
+        li.appendChild(title);
+        li.appendChild(del);
+        list.appendChild(li);
+      }
+    }
+
+    // Draw the list once when the page first loads.
+    render();
+  </script>
+</body>
+</html>
