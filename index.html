@@ -99,6 +99,26 @@
       border-color: var(--accent);
     }
 
+    /* ---- Filter row: search box + category filter ---- */
+    .filters {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .filters input,
+    .filters select {
+      font-size: 0.95rem;
+      padding: 10px;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--ink);
+    }
+    .filters input {
+      flex: 1;        /* search box takes the spare room */
+      min-width: 0;   /* lets it shrink on a narrow phone */
+    }
+
     /* ---- The list ---- */
     ul.items {
       list-style: none;
@@ -199,6 +219,15 @@
       <button class="tab" id="tab-done" type="button">Done</button>
     </div>
 
+    <!-- Phase 3: narrow the list by text and/or category. -->
+    <div class="filters">
+      <input type="search" id="search-input" placeholder="Search…" autocomplete="off" />
+      <select id="filter-category">
+        <option value="ALL">All categories</option>
+        <!-- The 8 categories get added by JavaScript below. -->
+      </select>
+    </div>
+
     <!-- The list of items gets drawn here by JavaScript. -->
     <ul class="items" id="list"></ul>
   </div>
@@ -242,14 +271,28 @@
     const list = document.getElementById("list");
     const tabActive = document.getElementById("tab-active");
     const tabDone = document.getElementById("tab-done");
+    const searchInput = document.getElementById("search-input");
+    const filterCategory = document.getElementById("filter-category");
 
-    // Fill the category picker from the CATEGORIES list above.
+    // Fill the category picker (add form) from the CATEGORIES list above.
     for (const cat of CATEGORIES) {
       const option = document.createElement("option");
       option.value = cat;
       option.textContent = cat;
       categoryInput.appendChild(option);
     }
+
+    // Fill the category FILTER too (it keeps its "All categories" option first).
+    for (const cat of CATEGORIES) {
+      const option = document.createElement("option");
+      option.value = cat;
+      option.textContent = cat;
+      filterCategory.appendChild(option);
+    }
+
+    // Re-draw whenever the search text or category filter changes.
+    searchInput.addEventListener("input", render);
+    filterCategory.addEventListener("change", render);
 
     // ====== Switching tabs ======
     tabActive.addEventListener("click", function () {
@@ -316,9 +359,18 @@
       tabActive.classList.toggle("active", currentView === "active");
       tabDone.classList.toggle("active", currentView === "done");
 
-      // Show only the items that belong in the current tab.
-      const visible = items.filter(function (i) {
+      // Step 1: items that belong in the current tab (Active vs Done).
+      const inView = items.filter(function (i) {
         return currentView === "done" ? i.done : !i.done;
+      });
+
+      // Step 2: narrow those by the search text and the category filter.
+      const term = searchInput.value.trim().toLowerCase();
+      const cat = filterCategory.value; // "ALL" or a specific category
+      const visible = inView.filter(function (i) {
+        const matchesCategory = (cat === "ALL") || (i.category === cat);
+        const matchesText = (term === "") || i.title.toLowerCase().includes(term);
+        return matchesCategory && matchesText;
       });
 
       list.innerHTML = ""; // clear what's there, then rebuild
@@ -326,9 +378,14 @@
       if (visible.length === 0) {
         const empty = document.createElement("div");
         empty.className = "empty";
-        empty.textContent = currentView === "done"
-          ? "Nothing completed yet — tick something off in Active."
-          : "Nothing yet — add your first want above.";
+        if (inView.length > 0) {
+          // There ARE items in this tab — they're just filtered out right now.
+          empty.textContent = "No matches. Try a different search or category.";
+        } else {
+          empty.textContent = currentView === "done"
+            ? "Nothing completed yet — tick something off in Active."
+            : "Nothing yet — add your first want above.";
+        }
         list.appendChild(empty);
         return;
       }
