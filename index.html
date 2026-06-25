@@ -569,20 +569,29 @@ Reykjavik"></textarea>
       });
     }
 
-    // Shrink very large photos and re-encode as JPEG. This keeps things fast
-    // and turns iPhone HEIC photos into a format every browser can show.
-    // Returns a Promise of a Blob ready to store.
+    // Shrink uploaded photos to the smallest size that still looks sharp where
+    // we actually show them, then re-encode as JPEG. Turning iPhone HEIC photos
+    // into JPEG also makes them displayable in every browser.
+    //
+    // Why these numbers: the photo is only ever shown small — a thumbnail in
+    // the list (≈ a phone's card width) and a form preview. A phone screen packs
+    // ~2–3 physical pixels per CSS pixel, so the most detail it can ever display
+    // is roughly card-width (~300px) × 3 ≈ 900px. We cap the longest side at
+    // 1000px (a little headroom) and use JPEG quality 0.7 — its compression
+    // artifacts are invisible at thumbnail scale but cut the file size sharply.
+    // (If we ever add a full-screen "tap to enlarge" view, raise PHOTO_MAX_DIM.)
+    const PHOTO_MAX_DIM = 1000;   // cap the longest side; smaller photos are left as-is
+    const PHOTO_QUALITY = 0.7;    // JPEG quality, 0–1
     function processImage(file) {
       return new Promise(function (resolve, reject) {
         const img = new Image();
         const url = URL.createObjectURL(file);
         img.onload = function () {
           URL.revokeObjectURL(url);
-          const maxDim = 1600;  // cap the longest side; smaller photos are left as-is
           let width = img.naturalWidth;
           let height = img.naturalHeight;
-          if (Math.max(width, height) > maxDim) {
-            const scale = maxDim / Math.max(width, height);
+          if (Math.max(width, height) > PHOTO_MAX_DIM) {
+            const scale = PHOTO_MAX_DIM / Math.max(width, height);
             width = Math.round(width * scale);
             height = Math.round(height * scale);
           }
@@ -593,7 +602,7 @@ Reykjavik"></textarea>
           canvas.toBlob(function (blob) {
             if (blob) resolve(blob);
             else reject(new Error("Could not process image"));
-          }, "image/jpeg", 0.85);
+          }, "image/jpeg", PHOTO_QUALITY);
         };
         img.onerror = function () {
           URL.revokeObjectURL(url);
